@@ -409,7 +409,10 @@ class Forecaster:
             raise NotFittedError("Model is not fitted yet.")
         for id, model in self.models.items():
             save(model, os.path.join(model_dir_path, f"{id}_{MODEL_FILE_NAME}"))
+        models = self.models
+        self.models = {}
         joblib.dump(self, os.path.join(model_dir_path, PREDICTOR_FILE_NAME))
+        self.models = models
 
     @classmethod
     def load(cls, model_dir_path: str) -> "Forecaster":
