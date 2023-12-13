@@ -32,6 +32,8 @@ class Forecaster:
     def __init__(
         self,
         data_schema: ForecastingSchema,
+        history_forecast_ratio: int = None,
+        lags_forecast_ratio: int = None,
         growth: Literal["off", "linear", "discontinuous"] = "linear",
         yearly_seasonality: Union[Literal["auto"], bool, int] = "auto",
         weekly_seasonality: Union[Literal["auto"], bool, int] = "auto",
@@ -62,6 +64,16 @@ class Forecaster:
 
             data_schema (ForecastingSchema):
                 Schema of the training data.
+
+            history_forecast_ratio (int):
+                Sets the history length depending on the forecast horizon.
+                For example, if the forecast horizon is 20 and the history_forecast_ratio is 10,
+                history length will be 20*10 = 200 samples.
+
+            lags_forecast_ratio (int):
+                Sets the n_lags parameter depending on the forecast horizon.
+                For example, if the forecast horizon is 20 and the lags_forecast_ratio is 10,
+                n_lags will be 20*10 = 200.
 
             growth (Literal["off", "linear", "discontinuous"]):
                 Set use of trend growth type.
@@ -170,6 +182,7 @@ class Forecaster:
                 Dictionary of additional trainer configuration parameters.
         """
         self.data_schema = data_schema
+        self.history_forecast_ratio = history_forecast_ratio
         self.growth = growth
         self.yearly_seasonality = yearly_seasonality
         self.weekly_seasonality = weekly_seasonality
@@ -192,11 +205,16 @@ class Forecaster:
         self.early_stopping = early_stopping
         self.kwargs = kwargs
         self._is_trained = False
-
         self.history_length = None
-        if kwargs.get("history_length"):
-            self.history_length = kwargs["history_length"]
-            kwargs.pop("history_length")
+        self.lags_forecast_ratio = lags_forecast_ratio
+
+        if history_forecast_ratio:
+            self.history_length = (
+                self.data_schema.forecast_length * history_forecast_ratio
+            )
+
+        if lags_forecast_ratio:
+            self.n_lags = self.data_schema.forecast_length * lags_forecast_ratio
 
         self.trainer_config = {}
 
