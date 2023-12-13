@@ -8,7 +8,6 @@ from neuralprophet import NeuralProphet
 from neuralprophet.utils import save, load
 from schema.data_schema import ForecastingSchema
 from sklearn.exceptions import NotFittedError
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch import cuda
 import torch
 
@@ -59,8 +58,111 @@ class Forecaster:
         """Construct a new NeuralProphet Forecaster
 
         Args:
-            **kwargs:
-                Optional arguments to initialize the pytorch_lightning.Module, pytorch_lightning.Trainer, and Darts' TorchForecastingModel.
+            growth (Literal["off", "linear", "discontinuous"]):
+                Set use of trend growth type.
+
+                Options:
+                off: no trend.
+
+                (default) linear: fits a piece-wise linear trend with n_changepoints + 1 segments
+
+                discontinuous: For advanced users only - not a conventional trend,
+
+                allows arbitrary jumps at each trend changepoint
+
+
+
+            yearly_seasonality (Union[Literal["auto"], bool, int]):
+                Fit yearly seasonality.
+
+                Options:
+                True or False
+                auto: set automatically
+                value: number of Fourier/linear terms to generate
+
+
+            weekly_seasonality (Union[Literal["auto"], bool, int]):
+                Fit monthly seasonality.
+
+                Options:
+                True or False
+                auto: set automatically
+                value: number of Fourier/linear terms to generate
+
+            daily_seasonality (Union[Literal["auto"], bool, int]):
+                Fit daily seasonality.
+
+                Options:
+                True or False
+                auto: set automatically
+                value: number of Fourier/linear terms to generate
+
+
+            seasonality_mode (Literal["additive", "multiplicative"]):
+                Specifies mode of seasonality
+
+                Options
+                (default) additive
+                multiplicative
+
+            seasonality_reg (float):
+                Parameter modulating the strength of the seasonality model.
+
+            season_global_local (Literal["global", "local"]):
+                Modelling strategy of the seasonality when multiple time series are present. Options:
+                global: All the elements are modelled with the same seasonality.
+                local: Each element is modelled with a different seasonality.
+
+
+            n_forecasts (int):
+                Number of steps ahead of prediction time step to forecast.
+
+
+            n_lags (int):
+                Previous time series steps to include in auto-regression. Aka AR-order
+
+
+            ar_layers (Optional[list]):
+                array of hidden layer dimensions of the AR-Net.
+                Specifies number of hidden layers (number of entries) and layer dimension (list entry).
+
+            learning_rate (Optional[float]):
+                Maximum learning rate setting for 1cycle policy scheduler.
+                Default None: Automatically sets the learning_rate based on a learning rate range test. For manual user input, (try values ~0.001-10).
+
+            epochs (Optional[int]):
+                Number of epochs (complete iterations over dataset) to train model.
+
+
+            batch_size (Optional[int]):
+                Number of samples per mini-batch.
+                If not provided, batch_size is approximated based on dataset size.
+                For manual values, try ~8-1024. For best results also leave epochs to None.
+
+            loss_func (Union[str, torch.nn.modules.loss._Loss, Callable]):
+                Type of loss to use:
+
+                Options
+                (default) Huber: Huber loss function
+                MSE: Mean Squared Error loss function
+                MAE: Mean Absolute Error loss function
+                torch.nn.functional.loss.: loss or callable for custom loss, eg. L1-Loss
+
+
+            optimizer (Union[str, Type[torch.optim.Optimizer]]):
+                Optimizer used for training.
+
+            normalize (Literal["auto", "soft", "soft1", "minmax", "standardize", "off"]):
+                Type of normalization to apply to the time series.
+
+            random_state (int):
+                Sets the underlying random seed at model initialization time.
+
+            use_exogenous (bool):
+                Indicated if covariates are used or not.
+
+            trainer_config (dict):
+                Dictionary of additional trainer configuration parameters.
         """
         self.data_schema = data_schema
         self.growth = growth
@@ -89,13 +191,6 @@ class Forecaster:
         if kwargs.get("history_length"):
             self.history_length = kwargs["history_length"]
             kwargs.pop("history_length")
-
-        stopper = EarlyStopping(
-            monitor="train_loss",
-            patience=20,
-            min_delta=0.0005,
-            mode="min",
-        )
 
         self.trainer_config = {}
 
@@ -245,7 +340,7 @@ class Forecaster:
             for covariate in future_covariates:
                 model.add_future_regressor(name=covariate)
 
-        model.fit(history)
+        model.fit(history, early_stopping=True)
         return model
 
     def predict(self, test_data: pd.DataFrame, prediction_col_name: str) -> np.ndarray:
