@@ -53,6 +53,7 @@ class Forecaster:
         random_state: int = 0,
         trainer_config: dict = {},
         use_exogenous: bool = True,
+        early_stopping: bool = True,
         **kwargs,
     ):
         """Construct a new NeuralProphet Forecaster
@@ -162,6 +163,9 @@ class Forecaster:
             use_exogenous (bool):
                 Indicated if covariates are used or not.
 
+            earlyy_stopping (bool):
+                If true, early stopping is enabled.
+
             trainer_config (dict):
                 Dictionary of additional trainer configuration parameters.
         """
@@ -185,6 +189,7 @@ class Forecaster:
         self.trainer_config = trainer_config
         self.use_exogenous = use_exogenous
         self.random_state = random_state
+        self.early_stopping = early_stopping
         self.kwargs = kwargs
         self._is_trained = False
 
@@ -247,6 +252,7 @@ class Forecaster:
                 )
                 self.last_timestamp = datetimes[-1]
                 self.timedelta = datetimes[-1] - datetimes[-2]
+
             else:
                 start_date = self.last_timestamp + self.timedelta
                 datetimes = pd.date_range(
@@ -266,6 +272,11 @@ class Forecaster:
         other_cols = [c for c in data.columns if c not in reordered_cols]
         reordered_cols.extend(other_cols)
         data = data[reordered_cols]
+
+        if is_train:
+            data.drop(columns=self.data_schema.past_covariates, inplace=True)
+        else:
+            data["y"] = 0
         return data
 
     def fit(
@@ -329,17 +340,15 @@ class Forecaster:
             **self.kwargs,
         )
 
-        past_covariates = self.data_schema.past_covariates
         future_covariates = self.data_schema.future_covariates
 
         if self.use_exogenous:
-            for covariate in past_covariates:
-                model.add_lagged_regressor(names=covariate)
-
             for covariate in future_covariates:
                 model.add_future_regressor(name=covariate)
 
-        model.fit(history, early_stopping=True)
+        self.target_series = history["y"]
+
+        model.fit(history, early_stopping=self.early_stopping)
         return model
 
     def predict(
@@ -358,7 +367,6 @@ class Forecaster:
         time_col_dtype = self.data_schema.time_col_dtype
 
         future_df = self.prepare_data(test_data.copy(), is_train=False)
-        future_df["y"] = 0
         groups_by_ids = future_df.groupby(id_col)
         all_series = [
             groups_by_ids.get_group(id_).drop(columns=id_col) for id_ in self.all_ids
