@@ -1,0 +1,11 @@
+{
+  "history_forecast_ratio": 10,
+  "seasonality_mode": "multiplicative",
+  "growth": "linear",
+  "epochs": 200,
+  "batch_size": 32,
+  "normalize": "auto",
+  "learning_rate": 1e-2,
+  "use_exogenous": true,
+  "random_state": 0
+}
