@@ -8,7 +8,7 @@ RUN apt-get -y update && apt-get install -y --no-install-recommends \
 
 # install python and pip and add symbolic link to python3
 RUN apt-get -y update && apt-get install -y --no-install-recommends \
-    python3.9 \
+    python3.10 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/bin/python
@@ -31,7 +31,7 @@ ENV PYTHONUNBUFFERED=TRUE
 ENV PYTHONDONTWRITEBYTECODE=TRUE
 ENV PATH="/opt/app:${PATH}"
 
-RUN mkdir -p /opt/src/darts_logs && chmod -R 777 /opt/src/darts_logs
+RUN mkdir -p /opt/src/lightning_logs && chmod -R 777 /opt/src/lightning_logs
 
 
 # set non-root user
