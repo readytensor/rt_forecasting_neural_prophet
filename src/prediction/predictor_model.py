@@ -58,6 +58,10 @@ class Forecaster:
         """Construct a new NeuralProphet Forecaster
 
         Args:
+
+            data_schema (ForecastingSchema):
+                Schema of the training data.
+
             growth (Literal["off", "linear", "discontinuous"]):
                 Set use of trend growth type.
 
