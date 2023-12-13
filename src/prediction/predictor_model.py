@@ -65,11 +65,8 @@ class Forecaster:
                 off: no trend.
 
                 (default) linear: fits a piece-wise linear trend with n_changepoints + 1 segments
-
                 discontinuous: For advanced users only - not a conventional trend,
-
                 allows arbitrary jumps at each trend changepoint
-
 
 
             yearly_seasonality (Union[Literal["auto"], bool, int]):
@@ -272,7 +269,6 @@ class Forecaster:
         history: pd.DataFrame,
         data_schema: ForecastingSchema,
         history_length: int = None,
-        test_dataframe: pd.DataFrame = None,
     ) -> None:
         """Fit the Forecaster to the training data.
         A separate NeuralProphet model is fit to each series that is contained
@@ -282,7 +278,6 @@ class Forecaster:
             history (pandas.DataFrame): The features of the training data.
             data_schema (ForecastingSchema): The schema of the training data.
             history_length (int): The length of the series used for training.
-            test_dataframe (pd.DataFrame): The testing data (needed only if the data contains future covariates).
         """
         np.random.seed(self.random_state)
 
@@ -343,14 +338,16 @@ class Forecaster:
         model.fit(history, early_stopping=True)
         return model
 
-    def predict(self, test_data: pd.DataFrame, prediction_col_name: str) -> np.ndarray:
+    def predict(
+        self, test_data: pd.DataFrame, prediction_col_name: str
+    ) -> pd.DataFrame:
         """Make the forecast of given length.
 
         Args:
             test_data (pd.DataFrame): Given test input for forecasting.
             prediction_col_name (str): Name to give to prediction column.
         Returns:
-            numpy.ndarray: The predicted class labels.
+            pd.DataFrame: The prediction dataframe.
         """
         time_col = self.data_schema.time_col
         id_col = self.data_schema.id_col
@@ -439,7 +436,6 @@ def train_predictor_model(
     history: pd.DataFrame,
     data_schema: ForecastingSchema,
     hyperparameters: dict,
-    testing_dataframe: pd.DataFrame = None,
 ) -> Forecaster:
     """
     Instantiate and train the predictor model.
@@ -462,7 +458,6 @@ def train_predictor_model(
         history=history,
         data_schema=data_schema,
         history_length=model.history_length,
-        test_dataframe=testing_dataframe,
     )
     return model
 
