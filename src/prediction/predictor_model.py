@@ -359,13 +359,16 @@ class Forecaster:
         )
 
         future_covariates = self.data_schema.future_covariates
-
+        self.ignored_covariates = []
         if self.use_exogenous:
             for covariate in future_covariates:
-                model.add_future_regressor(name=covariate)
+                if history[covariate].nunique() > 1:
+                    model.add_future_regressor(name=covariate)
+                else:
+                    history.drop(columns=covariate, inplace=True)
+                    self.ignored_covariates.append(covariate)
 
         self.target_series = history["y"]
-
         model.fit(history, early_stopping=self.early_stopping)
         return model
 
@@ -385,6 +388,8 @@ class Forecaster:
         time_col_dtype = self.data_schema.time_col_dtype
 
         future_df = self.prepare_data(test_data.copy(), is_train=False)
+        if self.ignored_covariates:
+            future_df.drop(columns=self.ignored_covariates, inplace=True)
         groups_by_ids = future_df.groupby(id_col)
         all_series = [
             groups_by_ids.get_group(id_).drop(columns=id_col) for id_ in self.all_ids
