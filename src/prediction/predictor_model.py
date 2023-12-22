@@ -207,6 +207,7 @@ class Forecaster:
         self._is_trained = False
         self.history_length = None
         self.lags_forecast_ratio = lags_forecast_ratio
+        self.freq = self.map_frequency(self.data_schema.frequency)
 
         if history_forecast_ratio:
             self.history_length = (
@@ -223,6 +224,27 @@ class Forecaster:
             print("GPU training is available.")
         else:
             print("GPU training not available.")
+
+        self.model = NeuralProphet(
+            growth=self.growth,
+            yearly_seasonality=self.yearly_seasonality,
+            weekly_seasonality=self.weekly_seasonality,
+            daily_seasonality=self.daily_seasonality,
+            seasonality_mode=self.seasonality_mode,
+            seasonality_reg=self.seasonality_reg,
+            season_global_local=self.season_global_local,
+            n_forecasts=self.n_forecasts,
+            n_lags=self.n_lags,
+            ar_layers=self.ar_layers,
+            learning_rate=self.learning_rate,
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            loss_func=self.loss_func,
+            optimizer=self.optimizer,
+            normalize=self.normalize,
+            trainer_config=self.trainer_config,
+            **self.kwargs,
+        )
 
     def prepare_data(self, data: pd.DataFrame, is_train=True) -> pd.DataFrame:
         """
@@ -295,13 +317,37 @@ class Forecaster:
             data.drop(columns=self.data_schema.past_covariates, inplace=True)
         else:
             data["y"] = 0
+
+        if not is_train:
+            data["y"] = 0
+            # if self.use_exogenous:
+            #     for c in self.data_schema.past_covariates:
+            #         data[c] = 0
+
+        if data[self.data_schema.id_col].nunique() > 1:
+            groups_by_ids = data.groupby(self.data_schema.id_col)
+            all_ids = list(groups_by_ids.groups.keys())
+            all_series = [groups_by_ids.get_group(id_) for id_ in all_ids]
+
+            if self.history_length:
+                all_series = [i.iloc[-self.history_length :] for i in all_series]
+
+            data = pd.concat(all_series)
+            data.rename(columns={self.data_schema.id_col: "ID"}, inplace=True)
+            covariates = (
+                self.data_schema.past_covariates + self.data_schema.future_covariates
+            )
+            if covariates and not self.use_exogenous:
+                for c in covariates:
+                    if c in data.columns:
+                        data.drop(columns=covariates, inplace=True)
+
         return data
 
     def fit(
         self,
         history: pd.DataFrame,
         data_schema: ForecastingSchema,
-        history_length: int = None,
     ) -> None:
         """Fit the Forecaster to the training data.
         A separate NeuralProphet model is fit to each series that is contained
@@ -310,67 +356,26 @@ class Forecaster:
         Args:
             history (pandas.DataFrame): The features of the training data.
             data_schema (ForecastingSchema): The schema of the training data.
-            history_length (int): The length of the series used for training.
         """
         np.random.seed(self.random_state)
 
         history = self.prepare_data(history.copy())
 
-        groups_by_ids = history.groupby(data_schema.id_col)
-        all_ids = list(groups_by_ids.groups.keys())
-        all_series = [
-            groups_by_ids.get_group(id_).drop(columns=data_schema.id_col)
-            for id_ in all_ids
-        ]
-
-        self.models = {}
-
-        for id, series in zip(all_ids, all_series):
-            if history_length:
-                series = series.iloc[-history_length:]
-            model = self._fit_on_series(history=series)
-            self.models[id] = model
-
-        self.all_ids = all_ids
-        self._is_trained = True
-        self.data_schema = data_schema
-
-    def _fit_on_series(self, history: pd.DataFrame):
-        """Fit Prophet model to given individual series of data"""
-        model = NeuralProphet(
-            growth=self.growth,
-            yearly_seasonality=self.yearly_seasonality,
-            weekly_seasonality=self.weekly_seasonality,
-            daily_seasonality=self.daily_seasonality,
-            seasonality_mode=self.seasonality_mode,
-            seasonality_reg=self.seasonality_reg,
-            season_global_local=self.season_global_local,
-            n_forecasts=self.n_forecasts,
-            n_lags=self.n_lags,
-            ar_layers=self.ar_layers,
-            learning_rate=self.learning_rate,
-            epochs=self.epochs,
-            batch_size=self.batch_size,
-            loss_func=self.loss_func,
-            optimizer=self.optimizer,
-            normalize=self.normalize,
-            trainer_config=self.trainer_config,
-            **self.kwargs,
-        )
-
-        future_covariates = self.data_schema.future_covariates
         self.ignored_covariates = []
         if self.use_exogenous:
-            for covariate in future_covariates:
+            for covariate in self.data_schema.future_covariates:
                 if history[covariate].nunique() > 1:
-                    model.add_future_regressor(name=covariate)
+                    self.model.add_future_regressor(name=covariate)
                 else:
                     history.drop(columns=covariate, inplace=True)
                     self.ignored_covariates.append(covariate)
 
-        self.target_series = history["y"]
-        model.fit(history, early_stopping=self.early_stopping)
-        return model
+            # if self.data_schema.past_covariates:
+            #     self.model.add_lagged_regressor(names=self.data_schema.past_covariates)
+
+        self.model.fit(df=history, freq=self.freq, early_stopping=self.early_stopping)
+        self._is_trained = True
+        self.data_schema = data_schema
 
     def predict(
         self, test_data: pd.DataFrame, prediction_col_name: str
@@ -390,23 +395,14 @@ class Forecaster:
         future_df = self.prepare_data(test_data.copy(), is_train=False)
         if self.ignored_covariates:
             future_df.drop(columns=self.ignored_covariates, inplace=True)
-        groups_by_ids = future_df.groupby(id_col)
-        all_series = [
-            groups_by_ids.get_group(id_).drop(columns=id_col) for id_ in self.all_ids
-        ]
-        # for some reason, multi-processing takes longer! So use single-threaded.
-        # forecast one series at a time
-        all_forecasts = []
-        for id_, series_df in zip(self.all_ids, all_series):
-            forecast = self._predict_on_series(key_and_future_df=(id_, series_df))
-            forecast.insert(0, id_col, id_)
-            all_forecasts.append(forecast)
 
+        all_forecasts = self.model.predict(df=future_df)
         # concatenate all series' forecasts into a single dataframe
-        all_forecasts = pd.concat(all_forecasts, axis=0, ignore_index=True)
+        # all_forecasts = pd.concat(all_forecasts, axis=0, ignore_index=True)
         all_forecasts["yhat1"] = all_forecasts["yhat1"].round(4)
         all_forecasts.rename(
             columns={
+                "ID": id_col,
                 "yhat1": prediction_col_name,
                 "ds": time_col,
             },
@@ -417,18 +413,33 @@ class Forecaster:
             all_forecasts[time_col] = all_forecasts[time_col].map(self.time_to_int_map)
         return all_forecasts
 
-    def _predict_on_series(self, key_and_future_df):
-        """Make forecast on given individual series of data"""
-        key, future_df = key_and_future_df
-        if self.models.get(key) is not None:
-            forecast = self.models[key].predict(future_df)
-            df_cols_to_use = ["ds", "yhat1"]
-            cols = [c for c in df_cols_to_use if c in forecast.columns]
-            forecast = forecast[cols]
-        else:
-            # no model found - key wasnt found in history, so cant forecast for it.
-            forecast = None
-        return forecast
+    def map_frequency(self, frequency: str) -> str:
+        """
+        Maps the frequency in the data schema to the frequency expected by GluonTS.
+
+        Args:
+            frequency (str): The frequency from the schema.
+
+        Returns (str): The mapped frequency.
+        """
+        frequency = frequency.lower()
+        frequency = frequency.split("frequency.")[1]
+        if frequency == "yearly":
+            return "Y"
+        if frequency == "quarterly":
+            return "Q"
+        if frequency == "monthly":
+            return "M"
+        if frequency == "weekly":
+            return "W"
+        if frequency == "daily":
+            return "D"
+        if frequency == "hourly":
+            return "H"
+        if frequency == "minutely":
+            return "min"
+        if frequency in ["secondly", "other"]:
+            return "S"
 
     def save(self, model_dir_path: str) -> None:
         """Save the Forecaster to disk.
@@ -438,12 +449,9 @@ class Forecaster:
         """
         if not self._is_trained:
             raise NotFittedError("Model is not fitted yet.")
-        for id, model in self.models.items():
-            save(model, os.path.join(model_dir_path, f"{id}_{MODEL_FILE_NAME}"))
-        models = self.models
-        self.models = {}
+
+        save(self.model, os.path.join(model_dir_path, MODEL_FILE_NAME))
         joblib.dump(self, os.path.join(model_dir_path, PREDICTOR_FILE_NAME))
-        self.models = models
 
     @classmethod
     def load(cls, model_dir_path: str) -> "Forecaster":
@@ -455,14 +463,8 @@ class Forecaster:
             Forecaster: A new instance of the loaded Forecaster.
         """
         forecaster = joblib.load(os.path.join(model_dir_path, PREDICTOR_FILE_NAME))
-        models = {}
-        file_names = [i for i in os.listdir(model_dir_path) if i != PREDICTOR_FILE_NAME]
-        for file in file_names:
-            series_id = file.split(MODEL_FILE_NAME)[0][:-1]
-            model = load(os.path.join(model_dir_path, file))
-            models[series_id] = model
-
-        forecaster.models = models
+        model = load(os.path.join(model_dir_path, MODEL_FILE_NAME))
+        forecaster.model = model
         return forecaster
 
     def __str__(self):
@@ -495,7 +497,6 @@ def train_predictor_model(
     model.fit(
         history=history,
         data_schema=data_schema,
-        history_length=model.history_length,
     )
     return model
 
