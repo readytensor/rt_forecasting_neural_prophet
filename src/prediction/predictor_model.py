@@ -4,7 +4,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from typing import Optional, Union, Literal, Callable, Type
-from neuralprophet import NeuralProphet
+from neuralprophet import NeuralProphet, set_random_seed
 from neuralprophet.utils import save, load
 from schema.data_schema import ForecastingSchema
 from sklearn.exceptions import NotFittedError
@@ -224,6 +224,8 @@ class Forecaster:
             print("GPU training is available.")
         else:
             print("GPU training not available.")
+
+        set_random_seed(self.random_state)
 
         self.model = NeuralProphet(
             growth=self.growth,
