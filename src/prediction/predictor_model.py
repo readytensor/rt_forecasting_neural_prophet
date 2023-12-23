@@ -459,6 +459,7 @@ class Forecaster:
             raise NotFittedError("Model is not fitted yet.")
 
         save(self.model, os.path.join(model_dir_path, MODEL_FILE_NAME))
+        self.model = None
         joblib.dump(self, os.path.join(model_dir_path, PREDICTOR_FILE_NAME))
 
     @classmethod
