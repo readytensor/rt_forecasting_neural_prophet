@@ -411,6 +411,10 @@ class Forecaster:
         # Change datetime back to integer
         if time_col_dtype == "INT":
             all_forecasts[time_col] = all_forecasts[time_col].map(self.time_to_int_map)
+
+        all_forecasts = all_forecasts[
+            [self.data_schema.time_col, self.data_schema.id_col, prediction_col_name]
+        ]
         return all_forecasts
 
     def map_frequency(self, frequency: str) -> str:
