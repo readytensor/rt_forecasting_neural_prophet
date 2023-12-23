@@ -341,6 +341,8 @@ class Forecaster:
                 for c in covariates:
                     if c in data.columns:
                         data.drop(columns=covariates, inplace=True)
+        else:
+            data.rename(columns={self.data_schema.id_col: "ID"}, inplace=True)
 
         return data
 
