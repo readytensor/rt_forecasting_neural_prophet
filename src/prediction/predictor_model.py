@@ -395,7 +395,6 @@ class Forecaster:
         time_col_dtype = self.data_schema.time_col_dtype
 
         original_time_col = test_data[time_col]
-        original_id_col = test_data[id_col]
         regressors_df = None
         covariates = self.data_schema.future_covariates
 

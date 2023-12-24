@@ -3,7 +3,7 @@
   "lags_forecast_ratio": 3,
   "seasonality_mode": "multiplicative",
   "growth": "linear",
-  "epochs": 5000,
+  "epochs": 500,
   "batch_size": 64,
   "normalize": "auto",
   "learning_rate": null,
