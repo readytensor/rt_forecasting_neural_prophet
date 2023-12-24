@@ -376,7 +376,6 @@ class Forecaster:
         self.model.fit(df=history, early_stopping=self.early_stopping)
         self._is_trained = True
         self.history = history
-        print(history)
 
     def predict(
         self, test_data: pd.DataFrame, prediction_col_name: str
@@ -392,7 +391,6 @@ class Forecaster:
         set_log_level("ERROR")
         time_col = self.data_schema.time_col
         id_col = self.data_schema.id_col
-        time_col_dtype = self.data_schema.time_col_dtype
 
         original_time_col = test_data[time_col]
         regressors_df = None
@@ -411,7 +409,6 @@ class Forecaster:
         )
 
         all_forecasts = self.model.predict(df=future_df)
-
         all_forecasts["yhat1"] = all_forecasts["yhat1"].round(4)
         all_forecasts.rename(
             columns={
