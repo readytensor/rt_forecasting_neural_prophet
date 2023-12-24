@@ -32,6 +32,7 @@ ENV PYTHONDONTWRITEBYTECODE=TRUE
 ENV PATH="/opt/app:${PATH}"
 
 RUN mkdir -p /opt/src/lightning_logs && chmod -R 777 /opt/src/lightning_logs
+RUN chmod -R 777 /opt/src/
 
 
 # set non-root user
