@@ -126,10 +126,8 @@ class Forecaster:
                 global: All the elements are modelled with the same seasonality.
                 local: Each element is modelled with a different seasonality.
 
-
             n_lags (int):
                 Previous time series steps to include in auto-regression. Aka AR-order
-
 
             ar_layers (Optional[list]):
                 array of hidden layer dimensions of the AR-Net.
@@ -219,8 +217,6 @@ class Forecaster:
             print("GPU training is available.")
         else:
             print("GPU training not available.")
-
-        set_random_seed(self.random_state)
 
         self.model = NeuralProphet(
             n_forecasts=self.n_forecasts,
@@ -372,6 +368,7 @@ class Forecaster:
         """
         np.random.seed(self.random_state)
         set_log_level("ERROR")
+        set_random_seed(self.random_state)
         history = self.prepare_data(history.copy())
         self.model.fit(df=history, early_stopping=self.early_stopping)
         self._is_trained = True
@@ -389,6 +386,7 @@ class Forecaster:
             pd.DataFrame: The prediction dataframe.
         """
         set_log_level("ERROR")
+        set_random_seed(self.random_state)
         time_col = self.data_schema.time_col
         id_col = self.data_schema.id_col
 
