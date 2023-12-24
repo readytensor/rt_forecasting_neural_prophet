@@ -4,7 +4,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from typing import Optional, Union, Literal, Callable, Type
-from neuralprophet import NeuralProphet, set_random_seed
+from neuralprophet import NeuralProphet, set_random_seed, set_log_level
 from neuralprophet.utils import save, load
 from schema.data_schema import ForecastingSchema
 from sklearn.exceptions import NotFittedError
@@ -371,12 +371,12 @@ class Forecaster:
             history (pandas.DataFrame): The features of the training data.
         """
         np.random.seed(self.random_state)
-
+        set_log_level("ERROR")
         history = self.prepare_data(history.copy())
-        print(history.columns)
-        self.model.fit(df=history, freq=self.freq, early_stopping=self.early_stopping)
+        self.model.fit(df=history, early_stopping=self.early_stopping)
         self._is_trained = True
         self.history = history
+        print(history)
 
     def predict(
         self, test_data: pd.DataFrame, prediction_col_name: str
@@ -389,11 +389,13 @@ class Forecaster:
         Returns:
             pd.DataFrame: The prediction dataframe.
         """
+        set_log_level("ERROR")
         time_col = self.data_schema.time_col
         id_col = self.data_schema.id_col
         time_col_dtype = self.data_schema.time_col_dtype
 
-        original_time_col = test_data[self.data_schema.time_col]
+        original_time_col = test_data[time_col]
+        original_id_col = test_data[id_col]
         regressors_df = None
         covariates = self.data_schema.future_covariates
 
@@ -403,13 +405,11 @@ class Forecaster:
             ]
             regressors_df = test_data[valid_covariates]
 
-        print(regressors_df)
         future_df = self.model.make_future_dataframe(
             df=self.history,
             periods=self.n_forecasts,
             regressors_df=regressors_df,
         )
-        print(future_df)
 
         all_forecasts = self.model.predict(df=future_df)
 
@@ -423,12 +423,10 @@ class Forecaster:
             inplace=True,
         )
         # Change datetime back to integer
-        if time_col_dtype == "INT":
-            all_forecasts[time_col] = original_time_col
 
-        all_forecasts = all_forecasts[
-            [self.data_schema.time_col, self.data_schema.id_col, prediction_col_name]
-        ]
+        all_forecasts[time_col] = original_time_col
+
+        all_forecasts = all_forecasts[[time_col, id_col, prediction_col_name]]
         return all_forecasts
 
     def map_frequency(self, frequency: str) -> str:
