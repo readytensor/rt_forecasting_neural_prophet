@@ -41,7 +41,6 @@ class Forecaster:
         seasonality_mode: Literal["additive", "multiplicative"] = "additive",
         seasonality_reg: float = 0,
         season_global_local: Literal["global", "local"] = "global",
-        n_forecasts: int = 1,
         n_lags: int = 0,
         ar_layers: Optional[list] = [],
         learning_rate: Optional[float] = None,
@@ -128,10 +127,6 @@ class Forecaster:
                 local: Each element is modelled with a different seasonality.
 
 
-            n_forecasts (int):
-                Number of steps ahead of prediction time step to forecast.
-
-
             n_lags (int):
                 Previous time series steps to include in auto-regression. Aka AR-order
 
@@ -190,7 +185,6 @@ class Forecaster:
         self.seasonality_mode = seasonality_mode
         self.seasonality_reg = seasonality_reg
         self.season_global_local = season_global_local
-        self.n_forecasts = n_forecasts
         self.n_lags = n_lags
         self.ar_layers = ar_layers
         self.learning_rate = learning_rate
@@ -208,6 +202,7 @@ class Forecaster:
         self.history_length = None
         self.lags_forecast_ratio = lags_forecast_ratio
         self.freq = self.map_frequency(self.data_schema.frequency)
+        self.n_forecasts = self.data_schema.forecast_length
 
         if history_forecast_ratio:
             self.history_length = (
@@ -228,6 +223,7 @@ class Forecaster:
         set_random_seed(self.random_state)
 
         self.model = NeuralProphet(
+            n_forecasts=self.n_forecasts,
             growth=self.growth,
             yearly_seasonality=self.yearly_seasonality,
             weekly_seasonality=self.weekly_seasonality,
@@ -235,7 +231,6 @@ class Forecaster:
             seasonality_mode=self.seasonality_mode,
             seasonality_reg=self.seasonality_reg,
             season_global_local=self.season_global_local,
-            n_forecasts=self.n_forecasts,
             n_lags=self.n_lags,
             ar_layers=self.ar_layers,
             learning_rate=self.learning_rate,
@@ -315,17 +310,6 @@ class Forecaster:
         reordered_cols.extend(other_cols)
         data = data[reordered_cols]
 
-        if is_train:
-            data.drop(columns=self.data_schema.past_covariates, inplace=True)
-        else:
-            data["y"] = 0
-
-        if not is_train:
-            data["y"] = 0
-            # if self.use_exogenous:
-            #     for c in self.data_schema.past_covariates:
-            #         data[c] = 0
-
         if data[self.data_schema.id_col].nunique() > 1:
             groups_by_ids = data.groupby(self.data_schema.id_col)
             all_ids = list(groups_by_ids.groups.keys())
@@ -346,40 +330,53 @@ class Forecaster:
         else:
             data.rename(columns={self.data_schema.id_col: "ID"}, inplace=True)
 
+        self.ignored_covariates = []
+        if self.use_exogenous:
+            for covariate in self.data_schema.future_covariates:
+                if data[covariate].nunique() > 1:
+                    self.model.add_future_regressor(name=covariate)
+                else:
+                    self.ignored_covariates.append(covariate)
+
+            if self.data_schema.past_covariates:
+                groups_by_ids = data.groupby("ID")
+                all_ids = list(groups_by_ids.groups.keys())
+                all_series = [groups_by_ids.get_group(id_) for id_ in all_ids]
+                for series in all_series:
+                    unique = series.drop(columns="ID").nunique() == 1
+                    unique_columns = unique[unique].index.tolist()
+                    self.ignored_covariates += unique_columns
+
+                for covariate in self.data_schema.past_covariates:
+                    if covariate not in self.ignored_covariates:
+                        # self.model.add_lagged_regressor(names=covariate)
+                        pass
+
+        if self.ignored_covariates:
+            data.drop(columns=self.ignored_covariates, inplace=True)
+
+        for c in self.data_schema.past_covariates:
+            if c in data.columns:
+                data.drop(columns=c, inplace=True)
+
         return data
 
     def fit(
         self,
         history: pd.DataFrame,
-        data_schema: ForecastingSchema,
     ) -> None:
         """Fit the Forecaster to the training data.
-        A separate NeuralProphet model is fit to each series that is contained
-        in the data.
 
         Args:
             history (pandas.DataFrame): The features of the training data.
-            data_schema (ForecastingSchema): The schema of the training data.
         """
         np.random.seed(self.random_state)
 
         history = self.prepare_data(history.copy())
-
-        self.ignored_covariates = []
-        if self.use_exogenous:
-            for covariate in self.data_schema.future_covariates:
-                if history[covariate].nunique() > 1:
-                    self.model.add_future_regressor(name=covariate)
-                else:
-                    history.drop(columns=covariate, inplace=True)
-                    self.ignored_covariates.append(covariate)
-
-            # if self.data_schema.past_covariates:
-            #     self.model.add_lagged_regressor(names=self.data_schema.past_covariates)
-
+        print(history.columns)
         self.model.fit(df=history, freq=self.freq, early_stopping=self.early_stopping)
         self._is_trained = True
-        self.data_schema = data_schema
+        self.history = history
 
     def predict(
         self, test_data: pd.DataFrame, prediction_col_name: str
@@ -396,13 +393,26 @@ class Forecaster:
         id_col = self.data_schema.id_col
         time_col_dtype = self.data_schema.time_col_dtype
 
-        future_df = self.prepare_data(test_data.copy(), is_train=False)
-        if self.ignored_covariates:
-            future_df.drop(columns=self.ignored_covariates, inplace=True)
+        original_time_col = test_data[self.data_schema.time_col]
+        regressors_df = None
+        covariates = self.data_schema.future_covariates
+
+        if self.use_exogenous and covariates:
+            valid_covariates = [
+                c for c in covariates if c not in self.ignored_covariates
+            ]
+            regressors_df = test_data[valid_covariates]
+
+        print(regressors_df)
+        future_df = self.model.make_future_dataframe(
+            df=self.history,
+            periods=self.n_forecasts,
+            regressors_df=regressors_df,
+        )
+        print(future_df)
 
         all_forecasts = self.model.predict(df=future_df)
-        # concatenate all series' forecasts into a single dataframe
-        # all_forecasts = pd.concat(all_forecasts, axis=0, ignore_index=True)
+
         all_forecasts["yhat1"] = all_forecasts["yhat1"].round(4)
         all_forecasts.rename(
             columns={
@@ -414,7 +424,7 @@ class Forecaster:
         )
         # Change datetime back to integer
         if time_col_dtype == "INT":
-            all_forecasts[time_col] = all_forecasts[time_col].map(self.time_to_int_map)
+            all_forecasts[time_col] = original_time_col
 
         all_forecasts = all_forecasts[
             [self.data_schema.time_col, self.data_schema.id_col, prediction_col_name]
@@ -499,14 +509,8 @@ def train_predictor_model(
         'Forecaster': The Forecaster model
     """
 
-    model = Forecaster(
-        data_schema=data_schema,
-        **hyperparameters,
-    )
-    model.fit(
-        history=history,
-        data_schema=data_schema,
-    )
+    model = Forecaster(data_schema=data_schema, **hyperparameters)
+    model.fit(history=history)
     return model
 
 
