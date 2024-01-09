@@ -227,7 +227,7 @@ class Forecaster:
             seasonality_mode=self.seasonality_mode,
             seasonality_reg=self.seasonality_reg,
             season_global_local=self.season_global_local,
-            n_lags=self.n_lags,
+            n_lags=0,
             ar_layers=self.ar_layers,
             learning_rate=self.learning_rate,
             epochs=self.epochs,
@@ -239,7 +239,7 @@ class Forecaster:
             **self.kwargs,
         )
 
-    def prepare_data(self, data: pd.DataFrame, is_train=True) -> pd.DataFrame:
+    def prepare_data(self, data: pd.DataFrame, is_train: bool = True) -> pd.DataFrame:
         """
         Function to prepare the dataframe to use with Prophet.
 
@@ -266,11 +266,12 @@ class Forecaster:
         """
         time_col = self.data_schema.time_col
         id_col = self.data_schema.id_col
-        target_col = self.data_schema.target
+        time_col_dtype = self.data_schema.time_col_dtype
+
         # sort data
         data = data.sort_values(by=[id_col, time_col])
 
-        if self.data_schema.time_col_dtype == "INT":
+        if time_col_dtype == "INT":
             # Find the number of rows for each location (assuming all locations have
             # the same number of rows)
             series_val_counts = data[id_col].value_counts()
@@ -285,7 +286,6 @@ class Forecaster:
                 )
                 self.last_timestamp = datetimes[-1]
                 self.timedelta = datetimes[-1] - datetimes[-2]
-
             else:
                 start_date = self.last_timestamp + self.timedelta
                 datetimes = pd.date_range(
@@ -300,64 +300,41 @@ class Forecaster:
             data[time_col] = data[time_col].dt.tz_localize(None)
 
         # rename columns as expected by Prophet
-        data = data.rename(columns={target_col: "y", time_col: "ds"})
-        reordered_cols = [id_col, "ds"]
+        data = data.rename(
+            columns={
+                self.data_schema.target: "y",
+                time_col: "ds",
+                self.data_schema.id_col: "ID",
+            }
+        )
+        reordered_cols = ["ID", "ds"]
         other_cols = [c for c in data.columns if c not in reordered_cols]
         reordered_cols.extend(other_cols)
         data = data[reordered_cols]
 
-        if data[self.data_schema.id_col].nunique() > 1:
-            groups_by_ids = data.groupby(self.data_schema.id_col)
-            all_ids = list(groups_by_ids.groups.keys())
-            all_series = [groups_by_ids.get_group(id_) for id_ in all_ids]
+        dropped_columns = (
+            self.data_schema.static_covariates.copy()
+            + self.data_schema.past_covariates.copy()
+        )
 
-            if self.history_length:
-                all_series = [i.iloc[-self.history_length :] for i in all_series]
+        if not self.use_exogenous:
+            dropped_columns += self.data_schema.future_covariates.copy()
 
-            data = pd.concat(all_series)
-            data.rename(columns={self.data_schema.id_col: "ID"}, inplace=True)
-            covariates = (
-                self.data_schema.past_covariates + self.data_schema.future_covariates
-            )
-            if covariates and not self.use_exogenous:
-                for c in covariates:
-                    if c in data.columns:
-                        data.drop(columns=covariates, inplace=True)
         else:
-            data.rename(columns={self.data_schema.id_col: "ID"}, inplace=True)
-
-        self.ignored_covariates = []
-        if self.use_exogenous:
             for covariate in self.data_schema.future_covariates:
                 if data[covariate].nunique() > 1:
                     self.model.add_future_regressor(name=covariate)
                 else:
-                    self.ignored_covariates.append(covariate)
+                    dropped_columns.append(covariate)
 
-            if self.data_schema.past_covariates:
-                groups_by_ids = data.groupby("ID")
-                all_ids = list(groups_by_ids.groups.keys())
-                all_series = [groups_by_ids.get_group(id_) for id_ in all_ids]
-                for series in all_series:
-                    unique = series.drop(columns="ID").nunique() == 1
-                    unique_columns = unique[unique].index.tolist()
-                    self.ignored_covariates += unique_columns
+            # for covariate in self.data_schema.past_covariates:
+            #     if data[covariate].nunique() > 1:
+            #         self.model.add_lagged_regressor(names=covariate)
+            #     else:
+            #         dropped_columns.append(covariate)
 
-                for covariate in self.data_schema.past_covariates:
-                    if covariate not in self.ignored_covariates:
-                        # self.model.add_lagged_regressor(names=covariate)
-                        pass
-
-        if self.ignored_covariates:
-            data.drop(columns=self.ignored_covariates, inplace=True)
-
-        for c in self.data_schema.past_covariates:
-            if c in data.columns:
-                data.drop(columns=c, inplace=True)
-
-        for c in self.data_schema.static_covariates:
-            if c in data.columns:
-                data.drop(columns=c, inplace=True)
+        data.drop(columns=dropped_columns, inplace=True)
+        self.dropped_columns = dropped_columns
 
         return data
 
@@ -393,24 +370,22 @@ class Forecaster:
         set_random_seed(self.random_state)
         time_col = self.data_schema.time_col
         id_col = self.data_schema.id_col
-
         original_time_col = test_data[time_col]
+
         regressors_df = None
         covariates = self.data_schema.future_covariates
 
         if self.use_exogenous and covariates:
-            valid_covariates = [
-                c for c in covariates if c not in self.ignored_covariates
-            ]
+            valid_covariates = [c for c in covariates if c not in self.dropped_columns]
             regressors_df = test_data[valid_covariates]
 
-        future_df = self.model.make_future_dataframe(
+        test_data = self.model.make_future_dataframe(
             df=self.history,
-            periods=self.n_forecasts,
+            periods=self.data_schema.forecast_length,
             regressors_df=regressors_df,
         )
+        all_forecasts = self.model.predict(df=test_data)
 
-        all_forecasts = self.model.predict(df=future_df)
         all_forecasts["yhat1"] = all_forecasts["yhat1"].round(4)
         all_forecasts.rename(
             columns={
@@ -420,10 +395,8 @@ class Forecaster:
             },
             inplace=True,
         )
-        # Change datetime back to integer
 
         all_forecasts[time_col] = original_time_col
-
         all_forecasts = all_forecasts[[time_col, id_col, prediction_col_name]]
         return all_forecasts
 
