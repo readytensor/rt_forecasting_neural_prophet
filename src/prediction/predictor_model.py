@@ -355,6 +355,10 @@ class Forecaster:
             if c in data.columns:
                 data.drop(columns=c, inplace=True)
 
+        for c in self.data_schema.static_covariates:
+            if c in data.columns:
+                data.drop(columns=c, inplace=True)
+
         return data
 
     def fit(
