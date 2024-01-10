@@ -315,7 +315,10 @@ class Forecaster:
         dropped_columns = self.data_schema.static_covariates.copy()
 
         if not self.use_exogenous:
-            dropped_columns += self.data_schema.future_covariates.copy()
+            dropped_columns += (
+                self.data_schema.future_covariates.copy()
+                + self.data_schema.past_covariates.copy()
+            )
 
         else:
             for covariate in self.data_schema.future_covariates:
