@@ -16,6 +16,16 @@ The following are the requirements for using your data with this model:
 
 ---
 
+### Covariates Support:
+
+Past :white_check_mark:
+
+Future :white_check_mark:
+
+Static :x:
+
+---
+
 Here are the highlights of this implementation: <br/>
 
 - A **Neural Prophet Forecaster** algorithm built using **Neural Prophet**

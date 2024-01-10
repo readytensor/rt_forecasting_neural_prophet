@@ -389,15 +389,17 @@ class Forecaster:
         all_ids = list(groups_by_ids.groups.keys())
         all_series = [groups_by_ids.get_group(id_) for id_ in all_ids]
 
-        for series in all_series:
+        for i, series in enumerate(all_series):
+            series = series.iloc[-self.n_forecasts :]
             for col in columns:
                 series["y"] = series["y"].combine_first(series[col])
 
-            series = series.iloc[-self.n_forecasts :]
             series["y"] = series["y"].round(4)
-            series["ds"] = original_time_col
+            all_series[i] = series
 
         all_forecasts = pd.concat(all_series)
+        all_forecasts["ds"] = original_time_col.values
+
         all_forecasts.rename(
             columns={
                 "ID": id_col,
