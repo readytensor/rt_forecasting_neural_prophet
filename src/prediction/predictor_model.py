@@ -227,7 +227,7 @@ class Forecaster:
             seasonality_mode=self.seasonality_mode,
             seasonality_reg=self.seasonality_reg,
             season_global_local=self.season_global_local,
-            n_lags=0,
+            n_lags=self.n_lags,
             ar_layers=self.ar_layers,
             learning_rate=self.learning_rate,
             epochs=self.epochs,
@@ -312,10 +312,7 @@ class Forecaster:
         reordered_cols.extend(other_cols)
         data = data[reordered_cols]
 
-        dropped_columns = (
-            self.data_schema.static_covariates.copy()
-            + self.data_schema.past_covariates.copy()
-        )
+        dropped_columns = self.data_schema.static_covariates.copy()
 
         if not self.use_exogenous:
             dropped_columns += self.data_schema.future_covariates.copy()
@@ -327,11 +324,11 @@ class Forecaster:
                 else:
                     dropped_columns.append(covariate)
 
-            # for covariate in self.data_schema.past_covariates:
-            #     if data[covariate].nunique() > 1:
-            #         self.model.add_lagged_regressor(names=covariate)
-            #     else:
-            #         dropped_columns.append(covariate)
+            for covariate in self.data_schema.past_covariates:
+                if data[covariate].nunique() > 1:
+                    self.model.add_lagged_regressor(names=covariate)
+                else:
+                    dropped_columns.append(covariate)
 
         data.drop(columns=dropped_columns, inplace=True)
         self.dropped_columns = dropped_columns
@@ -384,19 +381,32 @@ class Forecaster:
             periods=self.data_schema.forecast_length,
             regressors_df=regressors_df,
         )
-        all_forecasts = self.model.predict(df=test_data)
 
-        all_forecasts["yhat1"] = all_forecasts["yhat1"].round(4)
+        all_forecasts = self.model.predict(df=test_data)
+        columns = [f"yhat{i+1}" for i in range(self.n_forecasts)]
+
+        groups_by_ids = all_forecasts.groupby("ID")
+        all_ids = list(groups_by_ids.groups.keys())
+        all_series = [groups_by_ids.get_group(id_) for id_ in all_ids]
+
+        for series in all_series:
+            for col in columns:
+                series["y"] = series["y"].combine_first(series[col])
+
+            series = series.iloc[-self.n_forecasts :]
+            series["y"] = series["y"].round(4)
+            series["ds"] = original_time_col
+
+        all_forecasts = pd.concat(all_series)
         all_forecasts.rename(
             columns={
                 "ID": id_col,
-                "yhat1": prediction_col_name,
+                "y": prediction_col_name,
                 "ds": time_col,
             },
             inplace=True,
         )
 
-        all_forecasts[time_col] = original_time_col
         all_forecasts = all_forecasts[[time_col, id_col, prediction_col_name]]
         return all_forecasts
 
