@@ -41,7 +41,7 @@ class Forecaster:
         seasonality_mode: Literal["additive", "multiplicative"] = "additive",
         seasonality_reg: float = 0,
         season_global_local: Literal["global", "local"] = "global",
-        n_lags: int = 0,
+        n_lags: int = 1,
         ar_layers: Optional[list] = [],
         learning_rate: Optional[float] = None,
         epochs: Optional[int] = None,
@@ -127,7 +127,7 @@ class Forecaster:
                 local: Each element is modelled with a different seasonality.
 
             n_lags (int):
-                Previous time series steps to include in auto-regression. Aka AR-order
+                Previous time series steps to include in auto-regression. Aka AR-order (n_lags >= 1)
 
             ar_layers (Optional[list]):
                 array of hidden layer dimensions of the AR-Net.
