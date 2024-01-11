@@ -268,6 +268,16 @@ class Forecaster:
         id_col = self.data_schema.id_col
         time_col_dtype = self.data_schema.time_col_dtype
 
+        groups_by_ids = data.groupby(id_col)
+        all_ids = list(groups_by_ids.groups.keys())
+        all_series = [groups_by_ids.get_group(id_) for id_ in all_ids]
+
+        if self.history_length:
+            for index, series in enumerate(all_series):
+                all_series[index] = series.iloc[-self.history_length :]
+
+            data = pd.concat(all_series)
+
         # sort data
         data = data.sort_values(by=[id_col, time_col])
 
