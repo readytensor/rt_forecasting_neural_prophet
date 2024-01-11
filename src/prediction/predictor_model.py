@@ -278,6 +278,33 @@ class Forecaster:
 
             data = pd.concat(all_series)
 
+        dropped_columns = self.data_schema.static_covariates.copy()
+
+        if not self.use_exogenous:
+            dropped_columns += (
+                self.data_schema.future_covariates.copy()
+                + self.data_schema.past_covariates.copy()
+            )
+
+        else:
+            # Remove columns that have one unique value in any of the series.
+            for series in all_series:
+                unique = [
+                    col
+                    for col in self.data_schema.future_covariates
+                    if series[col].nunique() == 1
+                ]
+                dropped_columns += unique
+
+                unique = [
+                    col
+                    for col in self.data_schema.past_covariates
+                    if series[col].nunique() == 1
+                ]
+                dropped_columns += unique
+
+        dropped_columns = list(set(dropped_columns))
+
         # sort data
         data = data.sort_values(by=[id_col, time_col])
 
@@ -322,26 +349,13 @@ class Forecaster:
         reordered_cols.extend(other_cols)
         data = data[reordered_cols]
 
-        dropped_columns = self.data_schema.static_covariates.copy()
+        for covariate in self.data_schema.future_covariates:
+            if covariate not in dropped_columns:
+                self.model.add_future_regressor(name=covariate)
 
-        if not self.use_exogenous:
-            dropped_columns += (
-                self.data_schema.future_covariates.copy()
-                + self.data_schema.past_covariates.copy()
-            )
-
-        else:
-            for covariate in self.data_schema.future_covariates:
-                if data[covariate].nunique() > 1:
-                    self.model.add_future_regressor(name=covariate)
-                else:
-                    dropped_columns.append(covariate)
-
-            for covariate in self.data_schema.past_covariates:
-                if data[covariate].nunique() > 1:
-                    self.model.add_lagged_regressor(names=covariate)
-                else:
-                    dropped_columns.append(covariate)
+        for covariate in self.data_schema.past_covariates:
+            if covariate not in dropped_columns:
+                self.model.add_lagged_regressor(names=covariate)
 
         data.drop(columns=dropped_columns, inplace=True)
         self.dropped_columns = dropped_columns
