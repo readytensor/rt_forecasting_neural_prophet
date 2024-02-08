@@ -10,9 +10,11 @@ from schema.data_schema import ForecastingSchema
 from sklearn.exceptions import NotFittedError
 from torch import cuda
 import torch
+from logger import get_logger
 
 warnings.filterwarnings("ignore")
 
+logger = get_logger(task_name="model")
 
 PREDICTOR_FILE_NAME = "predictor.joblib"
 MODEL_FILE_NAME = "model_file"
@@ -218,27 +220,6 @@ class Forecaster:
         else:
             print("GPU training not available.")
 
-        self.model = NeuralProphet(
-            n_forecasts=self.n_forecasts,
-            growth=self.growth,
-            yearly_seasonality=self.yearly_seasonality,
-            weekly_seasonality=self.weekly_seasonality,
-            daily_seasonality=self.daily_seasonality,
-            seasonality_mode=self.seasonality_mode,
-            seasonality_reg=self.seasonality_reg,
-            season_global_local=self.season_global_local,
-            n_lags=self.n_lags,
-            ar_layers=self.ar_layers,
-            learning_rate=self.learning_rate,
-            epochs=self.epochs,
-            batch_size=self.batch_size,
-            loss_func=self.loss_func,
-            optimizer=self.optimizer,
-            normalize=self.normalize,
-            trainer_config=self.trainer_config,
-            **self.kwargs,
-        )
-
     def prepare_data(self, data: pd.DataFrame, is_train: bool = True) -> pd.DataFrame:
         """
         Function to prepare the dataframe to use with Prophet.
@@ -375,6 +356,40 @@ class Forecaster:
         set_log_level("ERROR")
         set_random_seed(self.random_state)
         history = self.prepare_data(history.copy())
+
+        if len(history) < self.data_schema.forecast_length * 2:
+            raise ValueError(
+                f"Training series is too short. History should be at least double the forecast horizon. history_length = ({len(history)}), forecast horizon = ({self.data_schema.forecast_length})"
+            )
+
+        if len(history) < self.n_forecasts + self.n_lags:
+            logger.warning(
+                "Dataframe has less than n_forecasts + n_lags rows."
+                f" Setting n_lags = (history_length - n_forecasts) = {len(history) - self.n_forecasts}"
+            )
+            self.n_lags = len(history) - self.n_forecasts
+
+        self.model = NeuralProphet(
+            n_forecasts=self.n_forecasts,
+            growth=self.growth,
+            yearly_seasonality=self.yearly_seasonality,
+            weekly_seasonality=self.weekly_seasonality,
+            daily_seasonality=self.daily_seasonality,
+            seasonality_mode=self.seasonality_mode,
+            seasonality_reg=self.seasonality_reg,
+            season_global_local=self.season_global_local,
+            n_lags=self.n_lags,
+            ar_layers=self.ar_layers,
+            learning_rate=self.learning_rate,
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            loss_func=self.loss_func,
+            optimizer=self.optimizer,
+            normalize=self.normalize,
+            trainer_config=self.trainer_config,
+            **self.kwargs,
+        )
+
         self.model.fit(df=history, early_stopping=self.early_stopping)
         self._is_trained = True
         self.history = history
