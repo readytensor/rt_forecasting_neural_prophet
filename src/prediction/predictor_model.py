@@ -341,6 +341,20 @@ class Forecaster:
         data.drop(columns=dropped_columns, inplace=True)
         self.dropped_columns = dropped_columns
 
+        series_length = data.groupby("ID")["y"].count().iloc[0]
+
+        if series_length < self.data_schema.forecast_length * 2:
+            raise ValueError(
+                f"Training series is too short. History should be at least double the forecast horizon. history_length = ({series_length}), forecast horizon = ({self.data_schema.forecast_length})"
+            )
+
+        if series_length < self.n_forecasts + self.n_lags:
+            logger.warning(
+                "Dataframe has less than n_forecasts + n_lags rows."
+                f" Setting n_lags = (history_length - n_forecasts) = {series_length - self.n_forecasts}"
+            )
+            self.n_lags = series_length - self.n_forecasts
+
         return data
 
     def fit(
@@ -356,18 +370,6 @@ class Forecaster:
         set_log_level("ERROR")
         set_random_seed(self.random_state)
         history = self.prepare_data(history.copy())
-
-        if len(history) < self.data_schema.forecast_length * 2:
-            raise ValueError(
-                f"Training series is too short. History should be at least double the forecast horizon. history_length = ({len(history)}), forecast horizon = ({self.data_schema.forecast_length})"
-            )
-
-        if len(history) < self.n_forecasts + self.n_lags:
-            logger.warning(
-                "Dataframe has less than n_forecasts + n_lags rows."
-                f" Setting n_lags = (history_length - n_forecasts) = {len(history) - self.n_forecasts}"
-            )
-            self.n_lags = len(history) - self.n_forecasts
 
         self.model = NeuralProphet(
             n_forecasts=self.n_forecasts,
