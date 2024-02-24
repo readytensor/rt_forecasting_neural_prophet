@@ -350,7 +350,7 @@ class Forecaster:
 
         if series_length < self.n_forecasts + self.n_lags:
             logger.warning(
-                "Dataframe has less than n_forecasts + n_lags rows."
+                "Dataframe has less than (n_forecasts + n_lags) rows."
                 f" Setting n_lags = (history_length - n_forecasts) = {series_length - self.n_forecasts}"
             )
             self.n_lags = series_length - self.n_forecasts
@@ -409,9 +409,6 @@ class Forecaster:
         """
         set_log_level("ERROR")
         set_random_seed(self.random_state)
-        time_col = self.data_schema.time_col
-        id_col = self.data_schema.id_col
-        original_time_col = test_data[time_col]
 
         regressors_df = None
         covariates = self.data_schema.future_covariates
@@ -420,41 +417,24 @@ class Forecaster:
             valid_covariates = [c for c in covariates if c not in self.dropped_columns]
             regressors_df = test_data[valid_covariates]
 
-        test_data = self.model.make_future_dataframe(
+        future_data = self.model.make_future_dataframe(
             df=self.history,
             periods=self.data_schema.forecast_length,
             regressors_df=regressors_df,
         )
 
-        all_forecasts = self.model.predict(df=test_data)
-        columns = [f"yhat{i+1}" for i in range(self.n_forecasts)]
+        all_forecasts = self.model.predict(df=future_data, raw=True, decompose=False)
 
-        groups_by_ids = all_forecasts.groupby("ID")
-        all_ids = list(groups_by_ids.groups.keys())
-        all_series = [groups_by_ids.get_group(id_) for id_ in all_ids]
+        forecast = []
+        for _, row in all_forecasts.iterrows():
+            predictions_columns_names = [
+                f"step{i}" for i in range(self.data_schema.forecast_length)
+            ]
 
-        for i, series in enumerate(all_series):
-            series = series.iloc[-self.n_forecasts :]
-            for col in columns:
-                series["y"] = series["y"].combine_first(series[col])
+            forecast += row[predictions_columns_names].values.tolist()
 
-            series["y"] = series["y"].round(4)
-            all_series[i] = series
-
-        all_forecasts = pd.concat(all_series)
-        all_forecasts["ds"] = original_time_col.values
-
-        all_forecasts.rename(
-            columns={
-                "ID": id_col,
-                "y": prediction_col_name,
-                "ds": time_col,
-            },
-            inplace=True,
-        )
-
-        all_forecasts = all_forecasts[[time_col, id_col, prediction_col_name]]
-        return all_forecasts
+        test_data[prediction_col_name] = forecast
+        return test_data
 
     def map_frequency(self, frequency: str) -> str:
         """
