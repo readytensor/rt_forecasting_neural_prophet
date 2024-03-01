@@ -7,7 +7,7 @@
   "epochs": 500,
   "batch_size": 32,
   "normalize": "auto",
-  "learning_rate": 1e-2,
+  "learning_rate": 1e-3,
   "use_exogenous": false,
   "early_stopping": true,
   "random_state": 0
