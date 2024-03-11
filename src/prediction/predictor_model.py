@@ -215,10 +215,12 @@ class Forecaster:
         self.trainer_config = {}
 
         if cuda.is_available():
+            self.accelerator = "auto"
             self.trainer_config["accelerator"] = "gpu"
-            print("GPU training is available.")
+            logger.info("GPU training is available.")
         else:
-            print("GPU training not available.")
+            self.accelerator = None
+            logger.info("GPU training not available.")
 
     def prepare_data(self, data: pd.DataFrame, is_train: bool = True) -> pd.DataFrame:
         """
@@ -388,7 +390,6 @@ class Forecaster:
             loss_func=self.loss_func,
             optimizer=self.optimizer,
             normalize=self.normalize,
-            trainer_config=self.trainer_config,
             **self.kwargs,
         )
 
