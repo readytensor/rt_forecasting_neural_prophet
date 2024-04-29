@@ -160,22 +160,12 @@ class Forecaster:
         else:
             self.accelerator = None
             logger.info("GPU training not available.")
-        self.model = NeuralProphet(
-            n_forecasts=self.n_forecasts,
-            n_lags=self.n_lags,
-            growth=self.growth,
-            seasonality_mode=self.seasonality_mode,
-            learning_rate=self.learning_rate,
-            epochs=self.epochs,
-            batch_size=self.batch_size,
-            loss_func=self.loss_func,
-            optimizer=self.optimizer,
-            normalize=self.normalize,
-            n_changepoints=3,
-            **self.kwargs,
-        )
+        self.model = None
         self.history = None
         self._is_trained = False
+        self.series_length = None
+        self.dropped_columns = []
+        self.used_regressors = []
 
     def prepare_data(self, data: pd.DataFrame, is_train: bool = True) -> pd.DataFrame:
         """
@@ -216,33 +206,6 @@ class Forecaster:
 
             data = pd.concat(all_series)
 
-        dropped_columns = self.data_schema.static_covariates.copy()
-
-        if not self.use_exogenous:
-            dropped_columns += (
-                self.data_schema.future_covariates.copy()
-                + self.data_schema.past_covariates.copy()
-            )
-
-        else:
-            # Remove columns that have one unique value in any of the series.
-            for series in all_series:
-                unique = [
-                    col
-                    for col in self.data_schema.future_covariates
-                    if series[col].nunique() == 1
-                ]
-                dropped_columns += unique
-
-                unique = [
-                    col
-                    for col in self.data_schema.past_covariates
-                    if series[col].nunique() == 1
-                ]
-                dropped_columns += unique
-
-        dropped_columns = list(set(dropped_columns))
-
         # sort data
         data = data.sort_values(by=[id_col, time_col])
 
@@ -282,37 +245,79 @@ class Forecaster:
                 self.data_schema.id_col: "ID",
             }
         )
+
         reordered_cols = ["ID", "ds"]
+        if is_train:
+            reordered_cols += ["y"]
         other_cols = [c for c in data.columns if c not in reordered_cols]
         reordered_cols.extend(other_cols)
         data = data[reordered_cols]
+        return data
+    
+    def handle_regressors(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Set regressors if `use_exogenous and regresors that are not constant.
+        Return data with appropriate columns
+        """
+        if self.use_exogenous:
+            regressors = self.data_schema.future_covariates + \
+                            self.data_schema.past_covariates
+            for regressor in regressors:
+                if data[regressor].nunique() >= 1:
+                    self.used_regressors.append(regressor)
+        else:
+            self.used_regressors = []
+        
+        cols = ["ID", "ds", "y"] + self.used_regressors
+        return data[cols]
 
+    def add_regressors_to_model(self):
         for covariate in self.data_schema.future_covariates:
-            if covariate not in dropped_columns:
+            if covariate in self.used_regressors:
                 self.model.add_future_regressor(name=covariate)
 
-        for covariate in self.data_schema.past_covariates:
-            if covariate not in dropped_columns:
+        for covariate in (self.data_schema.past_covariates):
+            if covariate in self.used_regressors:
                 self.model.add_lagged_regressor(names=covariate)
-
-        data.drop(columns=dropped_columns, inplace=True)
-        self.dropped_columns = dropped_columns
-
-        series_length = data.groupby("ID")["y"].count().iloc[0]
+    
+    def _verify_adequate_series_length(self, history: pd.DataFrame) -> None:
+        """
+        Verify if given series length is adequate and n_lags can be 
+        accomodated. 
+        """
+        series_length = self._get_series_length(history)
 
         if series_length < self.data_schema.forecast_length * 2:
             raise ValueError(
-                f"Training series is too short. History should be at least double the forecast horizon. history_length = ({series_length}), forecast horizon = ({self.data_schema.forecast_length})"
+                f"Training series is too short. History should be "
+                "at least double the forecast horizon. Given:\n"
+                f"history_length = ({series_length}), "
+                f"forecast horizon = ({self.data_schema.forecast_length})"
             )
 
+    def _get_series_length(self, history: pd.DataFrame) -> int:
+        """
+        Get the length of the series.
+        """
+        if self.series_length is None:
+            id_col = self.data_schema.id_col
+            target_col = self.data_schema.target
+            self.series_length  = history.groupby(id_col)[target_col].count().iloc[0]
+        return self.series_length
+    
+    def _set_n_lags(self, history: pd.DataFrame) -> int:
+        """
+        If not, set the number of lags based on lags_forecast_ratio
+        and the forecast horizon.
+        """
+        series_length = self._get_series_length(history)
         if series_length < self.n_forecasts + self.n_lags:
             logger.warning(
                 "Dataframe has less than (n_forecasts + n_lags) rows."
-                f" Setting n_lags = (history_length - n_forecasts) = {series_length - self.n_forecasts}"
+                " Setting n_lags = (history_length - n_forecasts) = "
+                f"{series_length - self.n_forecasts}"
             )
             self.n_lags = series_length - self.n_forecasts
-
-        return data
 
     def fit(
         self,
@@ -326,12 +331,34 @@ class Forecaster:
         np.random.seed(self.random_state)
         set_log_level("ERROR")
         set_random_seed(self.random_state)
-        
-        history = self.prepare_data(history.copy())
 
-        self.model.fit(df=history, early_stopping=self.early_stopping)
+        history = history.copy()
+
+        self._verify_adequate_series_length(history)
+        self._set_n_lags(history)
+
+        self.model = NeuralProphet(
+            n_forecasts=self.n_forecasts,
+            n_lags=self.n_lags,
+            growth=self.growth,
+            seasonality_mode=self.seasonality_mode,
+            learning_rate=self.learning_rate,
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            loss_func=self.loss_func,
+            optimizer=self.optimizer,
+            normalize=self.normalize,
+            n_changepoints=3,
+            **self.kwargs,
+        )
+
+        processed_history = self.prepare_data(history)
+        processed_history = self.handle_regressors(processed_history)
+        self.add_regressors_to_model()
+
+        self.model.fit(df=processed_history, early_stopping=self.early_stopping)
         self._is_trained = True
-        self.history = history
+        self.history = processed_history
 
     def predict(
         self, test_data: pd.DataFrame, prediction_col_name: str
@@ -347,11 +374,14 @@ class Forecaster:
         set_log_level("ERROR")
         set_random_seed(self.random_state)
 
-        regressors_df = None
-        covariates = self.data_schema.future_covariates
+        test_data = self.prepare_data(test_data.copy(), is_train=False)
 
-        if self.use_exogenous and covariates:
-            valid_covariates = [c for c in covariates if c not in self.dropped_columns]
+        regressors_df = None
+        covariates = self.used_regressors
+
+        if self.use_exogenous and len(covariates) > 0:
+            valid_covariates = [c for c in covariates
+                                if c in self.data_schema.future_covariates]
             regressors_df = test_data[valid_covariates]
 
         future_data = self.model.make_future_dataframe(
@@ -367,10 +397,23 @@ class Forecaster:
             predictions_columns_names = [
                 f"step{i}" for i in range(self.data_schema.forecast_length)
             ]
-
             forecast += row[predictions_columns_names].values.tolist()
 
         test_data[prediction_col_name] = forecast
+        test_data.rename(
+            columns={
+                "ID": self.data_schema.id_col,
+                "yhat": prediction_col_name,
+                "ds": self.data_schema.time_col,
+            },
+            inplace=True,
+        )
+        # Change datetime back to integer
+        if self.data_schema.time_col_dtype == "INT":
+            test_data[self.data_schema.time_col] = \
+                test_data[self.data_schema.time_col].map(
+                    self.time_to_int_map
+                )
         return test_data
 
     def save(self, model_dir_path: str) -> None:
