@@ -65,5 +65,3 @@ DEFAULT_HYPERPARAMETERS_FILE_PATH = os.path.join(
 )
 # Path to hyperparameter tuning config file
 HPT_CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, "hpt.json")
-# Path to explainer (explainable AI or XAI) config file
-EXPLAINER_CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, "explainer.json")

@@ -37,14 +37,7 @@ class Forecaster:
         history_forecast_ratio: int = None,
         lags_forecast_ratio: int = None,
         growth: Literal["off", "linear", "discontinuous"] = "linear",
-        yearly_seasonality: Union[Literal["auto"], bool, int] = "auto",
-        weekly_seasonality: Union[Literal["auto"], bool, int] = "auto",
-        daily_seasonality: Union[Literal["auto"], bool, int] = "auto",
         seasonality_mode: Literal["additive", "multiplicative"] = "additive",
-        seasonality_reg: float = 0,
-        season_global_local: Literal["global", "local"] = "global",
-        n_lags: int = 1,
-        ar_layers: Optional[list] = [],
         learning_rate: Optional[float] = None,
         epochs: Optional[int] = None,
         batch_size: Optional[int] = None,
@@ -86,54 +79,11 @@ class Forecaster:
                 discontinuous: For advanced users only - not a conventional trend,
                 allows arbitrary jumps at each trend changepoint
 
-
-            yearly_seasonality (Union[Literal["auto"], bool, int]):
-                Fit yearly seasonality.
-
-                Options:
-                True or False
-                auto: set automatically
-                value: number of Fourier/linear terms to generate
-
-
-            weekly_seasonality (Union[Literal["auto"], bool, int]):
-                Fit monthly seasonality.
-
-                Options:
-                True or False
-                auto: set automatically
-                value: number of Fourier/linear terms to generate
-
-            daily_seasonality (Union[Literal["auto"], bool, int]):
-                Fit daily seasonality.
-
-                Options:
-                True or False
-                auto: set automatically
-                value: number of Fourier/linear terms to generate
-
-
             seasonality_mode (Literal["additive", "multiplicative"]):
                 Specifies mode of seasonality
-
                 Options
                 (default) additive
                 multiplicative
-
-            seasonality_reg (float):
-                Parameter modulating the strength of the seasonality model.
-
-            season_global_local (Literal["global", "local"]):
-                Modelling strategy of the seasonality when multiple time series are present. Options:
-                global: All the elements are modelled with the same seasonality.
-                local: Each element is modelled with a different seasonality.
-
-            n_lags (int):
-                Previous time series steps to include in auto-regression. Aka AR-order (n_lags >= 1)
-
-            ar_layers (Optional[list]):
-                array of hidden layer dimensions of the AR-Net.
-                Specifies number of hidden layers (number of entries) and layer dimension (list entry).
 
             learning_rate (Optional[float]):
                 Maximum learning rate setting for 1cycle policy scheduler.
@@ -141,7 +91,6 @@ class Forecaster:
 
             epochs (Optional[int]):
                 Number of epochs (complete iterations over dataset) to train model.
-
 
             batch_size (Optional[int]):
                 Number of samples per mini-batch.
@@ -156,7 +105,6 @@ class Forecaster:
                 MSE: Mean Squared Error loss function
                 MAE: Mean Absolute Error loss function
                 torch.nn.functional.loss.: loss or callable for custom loss, eg. L1-Loss
-
 
             optimizer (Union[str, Type[torch.optim.Optimizer]]):
                 Optimizer used for training.
@@ -179,14 +127,7 @@ class Forecaster:
         self.data_schema = data_schema
         self.history_forecast_ratio = history_forecast_ratio
         self.growth = growth
-        self.yearly_seasonality = yearly_seasonality
-        self.weekly_seasonality = weekly_seasonality
-        self.daily_seasonality = daily_seasonality
         self.seasonality_mode = seasonality_mode
-        self.seasonality_reg = seasonality_reg
-        self.season_global_local = season_global_local
-        self.n_lags = n_lags
-        self.ar_layers = ar_layers
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.batch_size = batch_size
@@ -201,7 +142,6 @@ class Forecaster:
         self._is_trained = False
         self.history_length = None
         self.lags_forecast_ratio = lags_forecast_ratio
-        self.freq = self.map_frequency(self.data_schema.frequency)
         self.n_forecasts = self.data_schema.forecast_length
 
         if history_forecast_ratio:
@@ -209,8 +149,7 @@ class Forecaster:
                 self.data_schema.forecast_length * history_forecast_ratio
             )
 
-        if lags_forecast_ratio:
-            self.n_lags = self.data_schema.forecast_length * lags_forecast_ratio
+        self.n_lags = int(self.data_schema.forecast_length * lags_forecast_ratio)
 
         self.trainer_config = {}
 
@@ -221,6 +160,22 @@ class Forecaster:
         else:
             self.accelerator = None
             logger.info("GPU training not available.")
+        self.model = NeuralProphet(
+            n_forecasts=self.n_forecasts,
+            n_lags=self.n_lags,
+            growth=self.growth,
+            seasonality_mode=self.seasonality_mode,
+            learning_rate=self.learning_rate,
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            loss_func=self.loss_func,
+            optimizer=self.optimizer,
+            normalize=self.normalize,
+            n_changepoints=3,
+            **self.kwargs,
+        )
+        self.history = None
+        self._is_trained = False
 
     def prepare_data(self, data: pd.DataFrame, is_train: bool = True) -> pd.DataFrame:
         """
@@ -371,27 +326,8 @@ class Forecaster:
         np.random.seed(self.random_state)
         set_log_level("ERROR")
         set_random_seed(self.random_state)
+        
         history = self.prepare_data(history.copy())
-
-        self.model = NeuralProphet(
-            n_forecasts=self.n_forecasts,
-            growth=self.growth,
-            yearly_seasonality=self.yearly_seasonality,
-            weekly_seasonality=self.weekly_seasonality,
-            daily_seasonality=self.daily_seasonality,
-            seasonality_mode=self.seasonality_mode,
-            seasonality_reg=self.seasonality_reg,
-            season_global_local=self.season_global_local,
-            n_lags=self.n_lags,
-            ar_layers=self.ar_layers,
-            learning_rate=self.learning_rate,
-            epochs=self.epochs,
-            batch_size=self.batch_size,
-            loss_func=self.loss_func,
-            optimizer=self.optimizer,
-            normalize=self.normalize,
-            **self.kwargs,
-        )
 
         self.model.fit(df=history, early_stopping=self.early_stopping)
         self._is_trained = True
@@ -436,34 +372,6 @@ class Forecaster:
 
         test_data[prediction_col_name] = forecast
         return test_data
-
-    def map_frequency(self, frequency: str) -> str:
-        """
-        Maps the frequency in the data schema to the frequency expected by Prophet.
-
-        Args:
-            frequency (str): The frequency from the schema.
-
-        Returns (str): The mapped frequency.
-        """
-        frequency = frequency.lower()
-        frequency = frequency.split("frequency.")[1]
-        if frequency == "yearly":
-            return "Y"
-        if frequency == "quarterly":
-            return "Q"
-        if frequency == "monthly":
-            return "M"
-        if frequency == "weekly":
-            return "W"
-        if frequency == "daily":
-            return "D"
-        if frequency == "hourly":
-            return "H"
-        if frequency == "minutely":
-            return "min"
-        if frequency in ["secondly", "other"]:
-            return "S"
 
     def save(self, model_dir_path: str) -> None:
         """Save the Forecaster to disk.
