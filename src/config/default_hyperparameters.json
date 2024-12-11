@@ -1,12 +1,12 @@
 {
   "history_forecast_ratio": 15,
   "lags_forecast_ratio": 3,
-  "seasonality_mode": "multiplicative",
+  "seasonality_mode": "additive",
   "growth": "linear",
   "epochs": 500,
   "batch_size": null,
   "normalize": "minmax",
-  "learning_rate": 1e-2,
+  "learning_rate": null,
   "use_exogenous": false,
   "early_stopping": true,
   "random_state": 0
