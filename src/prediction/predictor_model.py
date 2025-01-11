@@ -253,21 +253,22 @@ class Forecaster:
         reordered_cols.extend(other_cols)
         data = data[reordered_cols]
         return data
-    
+
     def handle_regressors(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Set regressors if `use_exogenous and regresors that are not constant.
         Return data with appropriate columns
         """
         if self.use_exogenous:
-            regressors = self.data_schema.future_covariates + \
-                            self.data_schema.past_covariates
+            regressors = (
+                self.data_schema.future_covariates + self.data_schema.past_covariates
+            )
             for regressor in regressors:
                 if data[regressor].nunique() >= 1:
                     self.used_regressors.append(regressor)
         else:
             self.used_regressors = []
-        
+
         cols = ["ID", "ds", "y"] + self.used_regressors
         return data[cols]
 
@@ -276,14 +277,14 @@ class Forecaster:
             if covariate in self.used_regressors:
                 self.model.add_future_regressor(name=covariate)
 
-        for covariate in (self.data_schema.past_covariates):
+        for covariate in self.data_schema.past_covariates:
             if covariate in self.used_regressors:
                 self.model.add_lagged_regressor(names=covariate)
-    
+
     def _verify_adequate_series_length(self, history: pd.DataFrame) -> None:
         """
-        Verify if given series length is adequate and n_lags can be 
-        accomodated. 
+        Verify if given series length is adequate and n_lags can be
+        accomodated.
         """
         series_length = self._get_series_length(history)
 
@@ -302,9 +303,9 @@ class Forecaster:
         if self.series_length is None:
             id_col = self.data_schema.id_col
             target_col = self.data_schema.target
-            self.series_length  = history.groupby(id_col)[target_col].count().iloc[0]
+            self.series_length = history.groupby(id_col)[target_col].count().iloc[0]
         return self.series_length
-    
+
     def _set_n_lags(self, history: pd.DataFrame) -> int:
         """
         If not, set the number of lags based on lags_forecast_ratio
@@ -348,6 +349,7 @@ class Forecaster:
             loss_func=self.loss_func,
             optimizer=self.optimizer,
             normalize=self.normalize,
+            trainer_config=self.trainer_config,
             n_changepoints=3,
             **self.kwargs,
         )
@@ -380,8 +382,9 @@ class Forecaster:
         covariates = self.used_regressors
 
         if self.use_exogenous and len(covariates) > 0:
-            valid_covariates = [c for c in covariates
-                                if c in self.data_schema.future_covariates]
+            valid_covariates = [
+                c for c in covariates if c in self.data_schema.future_covariates
+            ]
             regressors_df = test_data[valid_covariates]
 
         future_data = self.model.make_future_dataframe(
@@ -410,10 +413,9 @@ class Forecaster:
         )
         # Change datetime back to integer
         if self.data_schema.time_col_dtype == "INT":
-            test_data[self.data_schema.time_col] = \
-                test_data[self.data_schema.time_col].map(
-                    self.time_to_int_map
-                )
+            test_data[self.data_schema.time_col] = test_data[
+                self.data_schema.time_col
+            ].map(self.time_to_int_map)
         return test_data
 
     def save(self, model_dir_path: str) -> None:
